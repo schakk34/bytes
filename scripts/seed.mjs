@@ -16,6 +16,12 @@ async function upsert(table, rows, conflict) {
   return response.json();
 }
 
+async function select(table, query) {
+  const response = await fetch(`${url}/rest/v1/${table}?${query}`, { headers:{apikey:key} });
+  if (!response.ok) throw new Error(`${table}: ${response.status} ${await response.text()}`);
+  return response.json();
+}
+
 const venueRows = [
   { name:"Carmine's Times Square", slug:"carmines-times-square", address_line_1:"200 West 44th Street", city:"New York", region:"NY", postal_code:"10036", website_url:"https://carminesnyc.com/locations/times-square", events_url:"https://carminesnyc.com/parties/times-square", contact_email:"parties44@carminesnyc.com", contact_phone:"917-512-7128", description:"Family-style Italian dining with private and semi-private event spaces.", cuisine:["Italian"], dietary_accommodations:["Food allergies accommodated with advance notice"] },
   { name:"Dos Caminos Times Square", slug:"dos-caminos-times-square", address_line_1:"1567 Broadway", city:"New York", region:"NY", postal_code:"10036", website_url:"https://www.doscaminos.com/location/dos-caminos-times-square/", events_url:"https://www.doscaminos.com/private-events-venue/times-square/", contact_phone:"212-918-1330", description:"Two-level Mexican restaurant with a private cellar room and flexible event layouts.", cuisine:["Mexican"], dietary_accommodations:["Vegetarian options"] },
@@ -28,6 +34,15 @@ const venueRows = [
 ].map((venue) => ({ contact_email:null, contact_phone:null, website_url:null, events_url:null, description:null, cuisine:[], dietary_accommodations:[], ...venue }));
 
 const venues = await upsert("venues", venueRows, "slug");
+
+const sourceRows = venueRows.map((venue) => ({
+  url:venue.events_url,
+  title:`${venue.name} private events`,
+  publisher:venue.name,
+  source_kind:venue.region === "HI" ? "hotel" : "venue",
+  checked_at:new Date().toISOString(),
+}));
+const sources = await upsert("sources", sourceRows, "url");
 
 const bySlug = Object.fromEntries(venues.map((venue) => [venue.slug, venue.id]));
 const spaces = [
@@ -48,5 +63,26 @@ const spaces = [
   ["prince-waikiki","Pre-Function Space","private",140,300,"Ballroom-adjacent cocktail space."],
 ].map(([slug,name,privacy,seated,reception,notes]) => ({ venue_id:bySlug[slug], name, privacy, seated_capacity:seated, reception_capacity:reception, notes }));
 
-await upsert("spaces", spaces, "venue_id,name");
-console.log(`Seeded ${venues.length} researched venues and ${spaces.length} spaces.`);
+const savedSpaces = await upsert("spaces", spaces, "venue_id,name");
+const sourceByUrl = Object.fromEntries(sources.map((source) => [source.url, source.id]));
+const sourceByVenue = Object.fromEntries(venueRows.map((venue) => [bySlug[venue.slug], sourceByUrl[venue.events_url]]));
+const existingFacts = await select("facts", "select=space_id,field_name&field_name=eq.capacity");
+const spacesWithCapacityFacts = new Set(existingFacts.map((fact) => fact.space_id));
+const trustBySlug = {
+  "tonys-di-napoli-times-square":"likely",
+};
+const slugByVenueId = Object.fromEntries(Object.entries(bySlug).map(([slug,id]) => [id,slug]));
+const capacityFacts = savedSpaces
+  .filter((space) => !spacesWithCapacityFacts.has(space.id))
+  .map((space) => ({
+    venue_id:space.venue_id,
+    space_id:space.id,
+    source_id:sourceByVenue[space.venue_id],
+    field_name:"capacity",
+    value:{seated:space.seated_capacity,reception:space.reception_capacity},
+    trust:trustBySlug[slugByVenueId[space.venue_id]] ?? "verified",
+    verified_at:new Date().toISOString(),
+  }));
+if (capacityFacts.length) await upsert("facts", capacityFacts, "id");
+
+console.log(`Seeded ${venues.length} researched venues, ${savedSpaces.length} spaces, and ${capacityFacts.length} new capacity facts.`);

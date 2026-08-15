@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rankCandidate } from "../../../lib/ranking";
 
-type DbSpace = { id:string; name:string; privacy:string; seated_capacity:number|null; reception_capacity:number|null; notes:string|null };
+type TrustLevel = "verified" | "likely" | "unverified";
+type DbFact = { field_name:string; trust:TrustLevel; verified_at:string|null; expires_at:string|null };
+type DbSpace = { id:string; name:string; privacy:string; seated_capacity:number|null; reception_capacity:number|null; notes:string|null; facts:DbFact[] };
 type DbVenue = {
   id:string; name:string; slug:string; address_line_1:string; city:string; region:string; postal_code:string|null;
   events_url:string|null; contact_email:string|null; contact_phone:string|null; description:string|null;
@@ -18,6 +20,20 @@ const venueMedia:Record<string,{imageUrl:string;menuUrl:string}> = {
   "hilton-hawaiian-village": { imageUrl:"https://assets.hiltonstatic.com/images/c_fill%2Cw_940%2Ch_626%2Cq_80%2Cf_auto%2Cg_auto/v1657891476/dx/wp/hnlhvhh-hilton-hawaiian-village-waikiki-beach-resort/media-library/HHV_Garden_event_09__1_/HHV_Garden_event_09__1_.jpg?_i=AA", menuUrl:"https://www.hilton.com/en/hotels/hnlhvhh-hilton-hawaiian-village-waikiki-beach-resort/events/" },
   "prince-waikiki": { imageUrl:"https://www.princewaikiki.com/content/uploads/2024/06/@elizahodgson-@stephenwright_5-scaled.jpg", menuUrl:"https://www.princewaikiki.com/content/uploads/2026/02/2026-Banquet-Menu-02.27.2026.pdf" },
 };
+
+const trustLabel:Record<TrustLevel,"Verified"|"Likely"|"Needs a call"> = {
+  verified:"Verified",
+  likely:"Likely",
+  unverified:"Needs a call",
+};
+
+function capacityTrustFor(space:DbSpace):TrustLevel {
+  const now = Date.now();
+  const currentCapacityFacts = (space.facts ?? [])
+    .filter((fact) => fact.field_name === "capacity" && (!fact.expires_at || Date.parse(fact.expires_at) > now))
+    .sort((a,b) => Date.parse(b.verified_at ?? "1970-01-01") - Date.parse(a.verified_at ?? "1970-01-01"));
+  return currentCapacityFacts[0]?.trust ?? "unverified";
+}
 
 async function route(origin:string, destination:string, mode:"walking"|"driving", apiKey:string) {
   const response = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
@@ -46,7 +62,7 @@ export async function POST(request:NextRequest) {
   const mapsKey = process.env.GOOGLE_MAPS_API_KEY;
   if (!supabaseUrl || !supabaseKey || !mapsKey) return NextResponse.json({error:"Search services are not configured."},{status:503});
 
-  const venuesResponse = await fetch(`${supabaseUrl}/rest/v1/venues?select=*,spaces(*)&active=eq.true`, { headers:{apikey:supabaseKey}, cache:"no-store" });
+  const venuesResponse = await fetch(`${supabaseUrl}/rest/v1/venues?select=*,spaces(*,facts(field_name,trust,verified_at,expires_at))&active=eq.true`, { headers:{apikey:supabaseKey}, cache:"no-store" });
   if (!venuesResponse.ok) return NextResponse.json({error:"Venue research is temporarily unavailable."},{status:502});
   const venues = await venuesResponse.json() as DbVenue[];
 
@@ -64,7 +80,7 @@ export async function POST(request:NextRequest) {
       const capB = eventStyle === "reception" ? b.reception_capacity : b.seated_capacity;
       return (capA ?? 9999) - (capB ?? 9999);
     })[0];
-    const capacityTrust = venue.slug === "tonys-di-napoli-times-square" ? "likely" : "verified";
+    const capacityTrust = capacityTrustFor(best);
     const ranking = rankCandidate({
       seatedCapacity:best.seated_capacity, receptionCapacity:best.reception_capacity, commuteMinutes:commute.minutes,
       capacityTrust, priceTrust:"unverified", dietaryCount:venue.dietary_accommodations?.length ?? 0,
@@ -75,10 +91,10 @@ export async function POST(request:NextRequest) {
       id:venue.id, name:venue.name, address:fullAddress, neighborhood:venue.city, score:ranking.score,
       commute:`${commute.minutes} min`, distanceMeters:commute.meters, mode:mode === "walking" ? "Walk" : "Drive",
       capacity:eventStyle === "reception" ? best.reception_capacity : best.seated_capacity,
-      price:"Pricing on request", priceTrust:"Needs a call", trust:capacityTrust === "verified" ? "Verified" : "Likely",
+      price:"Pricing on request", priceTrust:"Needs a call", trust:trustLabel[capacityTrust],
       note:`${best.name} fits ${headcount} guests and is ${commute.minutes} minutes away by ${mode === "walking" ? "foot" : "car"}.`,
       tags:[...(venue.cuisine ?? []), ...(venue.dietary_accommodations ?? []).slice(0,1)],
-      rooms:venue.spaces.map((space) => ({name:space.name,capacity:`${space.seated_capacity ?? "—"} seated · ${space.reception_capacity ?? "—"} reception`})),
+      rooms:venue.spaces.map((space) => ({name:space.name,capacity:`${space.seated_capacity ?? "—"} seated · ${space.reception_capacity ?? "—"} reception`,trust:trustLabel[capacityTrustFor(space)]})),
       contact:venue.contact_email ?? "Email via venue inquiry", phone:venue.contact_phone ?? "Not published", tone:venue.region === "HI" ? "green" : venue.region === "CA" ? "wine" : "umber",
       sourceUrl:venue.events_url, sourceLabel:"Official venue source", reasons:ranking.reasons,
       imageUrl:media?.imageUrl, menuUrl:media?.menuUrl,
