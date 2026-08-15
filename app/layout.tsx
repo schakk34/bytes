@@ -6,7 +6,7 @@ const serif = Cormorant_Garamond({ variable: "--font-serif", subsets: ["latin"],
 const sans = DM_Sans({ variable: "--font-sans", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Nowadays — Private Dining Finder",
+  title: "bytes — Private Dining Finder",
   description: "Thoughtful private dining recommendations for corporate gatherings.",
 };
 

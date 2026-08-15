@@ -1,8 +1,8 @@
-# vinext-starter
+# bytes — Private Dining Finder
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+An evidence-led research and recommendation tool for event planners. It ranks
+private dining candidates by capacity, commute, source confidence, pricing
+transparency, dietary support, and contactability. It does not make bookings.
 
 ## Prerequisites
 
@@ -18,14 +18,17 @@ npm run build
 
 This starter does not use `wrangler.jsonc`.
 
-## Included Shape
+## Data architecture
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+- React interface under `app/`
+- PostgreSQL schema under `supabase/migrations/`
+- Field-level evidence and trust labels through `sources` and `facts`
+- Cached route calculations in `travel_times`
+- Explainable deterministic scoring in `lib/ranking.ts`
+
+Copy `.env.example` to `.env.local` and add Supabase and maps credentials. The
+service-role key must only be used by server routes and must never be exposed to
+the browser.
 
 ## Workspace Auth Headers
 

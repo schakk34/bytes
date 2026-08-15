@@ -1,5 +1,5 @@
 {
-  "name": "nowadays-private-dining",
+  "name": "bytes-private-dining",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -12,6 +12,7 @@
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
+    ,"db:seed": "node --env-file=.env.local scripts/seed.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
